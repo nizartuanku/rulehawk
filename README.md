@@ -61,7 +61,7 @@ This repository is the **free edition**: audit **1 config**, all four checks,
 webhook notifications, self-hosted, no telemetry. It is fully functional — the
 same engine the paid edition runs on.
 
-The paid edition ([RuleHawk on Whop](https://whop.com/rulehawk)) lifts the caps
+The paid edition ([RuleHawk on Whop](https://whop.com/nizar-tuanku/rulehawk?utm_source=github)) lifts the caps
 and adds team features:
 
 | | Free | Pro | Team |
