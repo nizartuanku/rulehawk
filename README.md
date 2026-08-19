@@ -2,6 +2,12 @@
 
 **Self-hosted firewall config auditor — find shadowed rules, permissive allows, and config drift across every vendor.**
 
+![RuleHawk finding a deny rule that can never match because an earlier allow already covers it](docs/demo.gif)
+
+*Real run: a Cisco ASA ACL where `deny ip host 172.16.9.31 any` sits below
+`permit ip 172.16.8.0/21 any`. The host someone blocked after an incident is still getting through,
+and the config alone doesn't show it. RuleHawk names both rules.*
+
 Firewall rule bases rot. Rules get added and never removed, a broad `allow`
 quietly shadows the `deny` that was supposed to protect something, and nobody
 remembers why rule 47 exists. RuleHawk reads an exported config and surfaces the
