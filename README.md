@@ -93,7 +93,7 @@ iptables/nftables, Cisco ASA, pfSense/OPNsense, and Fortinet FortiGate. Cisco
 FTD and Palo Alto are on the roadmap — each is a parser against the shared rule
 model, so every check lights up for a new vendor the moment its config parses.
 
-## Working with the other Sentinel tools
+## Working with the other Hexward tools
 
 Every tool in the line can emit its findings as syslog, which is how they feed
 each other:
@@ -111,7 +111,7 @@ Point it at [Loglight](https://github.com/nizartuanku/loglight) and its findings
 land next to Loglight's own detections: a Decoy trip from an address Loglight
 already saw port-scanning is raised as one critical incident with the timeline
 attached, rather than two alerts you have to join up yourself. Any other syslog
-collector works too — there is nothing Sentinel-specific about the format.
+collector works too — there is nothing Hexward-specific about the format.
 
 Available on every tier, free included.
 
@@ -127,4 +127,4 @@ resolve to a CIDR are compared by name; it won't claim coverage it can't prove.
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-Part of the **Sentinel** line of self-hosted security tools.
+Part of the **Hexward** line of self-hosted security tools.
