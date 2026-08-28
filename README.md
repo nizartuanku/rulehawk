@@ -35,11 +35,12 @@ License validation is offline cryptography — no phone-home, ever.
 ## Quick start
 
 ```bash
-# Docker
-docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data rulehawk
-
-# Or the bare binary
+# Download a release binary, then:
 ./rulehawk
+
+# Or build the container image yourself — a Dockerfile ships in this repo:
+docker build -t hexward/rulehawk .
+docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk
 ```
 
 Open `http://127.0.0.1:8426`, paste or upload a firewall config, pick its
