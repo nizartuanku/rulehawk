@@ -1,6 +1,7 @@
 # RuleHawk — minimal production image.
-# Build:  docker build -t rulehawk .
-# Run:    docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data rulehawk
+# Pull:  docker pull hexward/rulehawk:0.1.0   (linux/amd64, linux/arm64)
+# Build: docker build -t hexward/rulehawk .
+# Run:   docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk
 
 FROM golang:1.24-bookworm AS build
 WORKDIR /src
@@ -8,6 +9,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 # CGO is required by the mattn/go-sqlite3 driver used in this build.
+# Deliberately empty for the public image: no issuer key means every licence
+# reads as invalid, which is exactly what the free edition is. Licensed release
+# builds pass the real public key here.
 ARG ISSUER_PUBKEY=""
 RUN CGO_ENABLED=1 go build -trimpath \
     -ldflags "-s -w -X main.issuerPublicKeyB64=${ISSUER_PUBKEY}" \
