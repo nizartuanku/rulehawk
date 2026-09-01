@@ -14,7 +14,7 @@ import (
 // re-audit) and OnDelete.
 type Console struct {
 	Store    Store
-	Caps     func() int            // max configs for the tier (0 = unlimited)
+	Caps     func() int // max configs for the tier (0 = unlimited)
 	OnSaved  func(name string) error
 	OnDelete func(name string)
 }
