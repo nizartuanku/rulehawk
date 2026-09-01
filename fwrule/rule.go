@@ -37,6 +37,22 @@ type Rule struct {
 	Log       bool
 	Desc      string
 	Raw       string // original config text for this rule
+
+	// Conditional marks a rule carrying match conditions this model does not
+	// represent — connection state, rate limits, packet marks, tcp flags, a
+	// negated match. Such a rule matches only a subset of what its addresses
+	// and ports suggest, so it can never be shown to cover another rule, and
+	// it is not an unconditional broad allow. Honesty over false completeness:
+	// we under-claim rather than report a shadow that isn't there.
+	Conditional bool
+}
+
+// loopback reports whether a rule is scoped to the loopback interface, where
+// traffic never leaves the host. A blanket accept there is normal practice, not
+// a permissive rule.
+func (r Rule) loopback() bool {
+	i := strings.ToLower(strings.TrimSpace(r.Iface))
+	return i == "lo" || i == "lo0" || i == "loopback"
 }
 
 // anyAddr reports whether an address list means "everything".
@@ -198,11 +214,26 @@ func toRanges(ports []string) []portRange {
 	return out
 }
 
+// ifaceCovers reports whether a rule scoped to interface a can apply to traffic
+// matched by a rule scoped to interface b. A rule bound to one interface says
+// nothing about traffic on another, so it cannot cover it.
+func ifaceCovers(a, b string) bool {
+	a, b = norm(a), norm(b)
+	if a == "" || a == "any" || a == "all" || a == "*" {
+		return true
+	}
+	return a == b
+}
+
 // Covers reports whether rule j (earlier) covers rule i: j's match is a superset
 // of i's, so any packet matching i also matches j. Action is not considered —
 // coverage is about the match, which is what makes i unreachable.
 func (j Rule) Covers(i Rule) bool {
-	return protoCovers(j.Proto, i.Proto) &&
+	if j.Conditional {
+		return false // j matches only a subset we can't see; claim nothing
+	}
+	return ifaceCovers(j.Iface, i.Iface) &&
+		protoCovers(j.Proto, i.Proto) &&
 		addrsCover(j.SrcAddrs, i.SrcAddrs) &&
 		addrsCover(j.DstAddrs, i.DstAddrs) &&
 		portsCover(j.SrcPorts, i.SrcPorts) &&

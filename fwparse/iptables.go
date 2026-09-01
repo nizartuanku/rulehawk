@@ -34,11 +34,34 @@ func parseIptables(vendor, config string) (Result, error) {
 	return res, nil
 }
 
+// modelledOption / modelledModule list the long options and match modules this
+// parser fully represents in the rule model. Anything outside them sets
+// Rule.Conditional — the rule matches less than its addresses and ports imply.
+var modelledOption = map[string]bool{
+	"--source": true, "--destination": true, "--protocol": true,
+	"--dport": true, "--dports": true, "--sport": true, "--sports": true,
+	"--in-interface": true, "--out-interface": true, "--jump": true,
+	"--comment": true,
+}
+
+var modelledModule = map[string]bool{
+	"tcp": true, "udp": true, "multiport": true, "comment": true,
+}
+
 func parseIptablesRule(line string) (fwrule.Rule, bool) {
 	toks := fieldsRespectingQuotes(line)
 	r := fwrule.Rule{Enabled: true, Raw: line, Proto: "any", Action: fwrule.Other}
 	haveTarget := false
 	for i := 0; i < len(toks); i++ {
+		// Anything this parser does not model narrows the rule's real match
+		// (conntrack state, rate limits, tcp flags, a negated match). Record
+		// that rather than treating the rule as matching everything.
+		if toks[i] == "!" || (strings.HasPrefix(toks[i], "--") && !modelledOption[toks[i]]) {
+			r.Conditional = true
+		}
+		if toks[i] == "-m" && i+1 < len(toks) && !modelledModule[strings.ToLower(toks[i+1])] {
+			r.Conditional = true
+		}
 		switch toks[i] {
 		case "-A", "-I":
 			if i+1 < len(toks) {

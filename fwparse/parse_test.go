@@ -194,3 +194,32 @@ func TestVendorsHaveLabels(t *testing.T) {
 		}
 	}
 }
+
+// Match extensions the parser does not model narrow the rule's real match, so
+// they must be recorded rather than treated as matching everything.
+func TestIptablesConditionalMatches(t *testing.T) {
+	cfg := `*filter
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT
+-A INPUT ! -s 10.0.0.0/8 -j DROP
+-A INPUT -p tcp -m tcp --tcp-flags SYN,RST SYN -j ACCEPT
+COMMIT`
+	res, err := Parse("iptables", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rules) != 5 {
+		t.Fatalf("want 5 rules, got %d", len(res.Rules))
+	}
+	want := []bool{false, true, false, true, true}
+	for i, w := range want {
+		if res.Rules[i].Conditional != w {
+			t.Errorf("rule %d: Conditional=%v want %v (%s)",
+				i+1, res.Rules[i].Conditional, w, res.Rules[i].Raw)
+		}
+	}
+	if res.Rules[0].Iface != "lo" {
+		t.Errorf("interface not captured: %q", res.Rules[0].Iface)
+	}
+}

@@ -44,7 +44,7 @@ func TestAddrsCover(t *testing.T) {
 		{[]string{"10.0.0.0/24"}, []string{"10.0.1.0/24"}, false},
 		{[]string{"10.0.0.0/8"}, []string{"any"}, false},
 		{[]string{"192.168.1.0/24"}, []string{"192.168.1.0/24"}, true},
-		{[]string{"obj-web"}, []string{"obj-web"}, true},  // named object exact match
+		{[]string{"obj-web"}, []string{"obj-web"}, true}, // named object exact match
 		{[]string{"obj-web"}, []string{"obj-db"}, false}, // named object mismatch
 	}
 	for _, c := range cases {
@@ -208,5 +208,102 @@ func TestDriftStableKeyAcrossReorder(t *testing.T) {
 	b := rule(7, Allow, "10.0.0.0/24", "10.0.1.5/32", "tcp", "443")
 	if a.MatchKey() != b.MatchKey() {
 		t.Fatalf("MatchKey should ignore index: %q vs %q", a.MatchKey(), b.MatchKey())
+	}
+}
+
+// --- scoped and conditional rules -------------------------------------------
+
+// A rule bound to one interface says nothing about traffic on another, so it
+// must not be reported as shadowing it. The regression this guards: an
+// `-A INPUT -i lo -j ACCEPT` at the top of every Linux rule base marked every
+// rule below it as dead.
+func TestInterfaceScopedRuleDoesNotShadow(t *testing.T) {
+	lo := rule(1, Allow, "any", "any", "any", "any")
+	lo.Iface = "lo"
+	web := rule(2, Allow, "any", "any", "tcp", "443")
+	web.Iface = "eth0"
+	blocked := rule(3, Deny, "10.0.0.0/8", "any", "any", "any")
+	blocked.Iface = "eth0"
+
+	iss := Analyze([]Rule{lo, web, blocked})
+	if hasCheck(iss, "rule.shadowed") {
+		t.Errorf("interface-scoped rule reported a shadow: %+v", iss)
+	}
+	// Same interface, and the coverage is real: still reported.
+	lo.Iface = "eth0"
+	if !hasCheck(Analyze([]Rule{lo, web, blocked}), "rule.shadowed") {
+		t.Error("same-interface coverage should still be reported")
+	}
+}
+
+// A loopback accept is normal practice, not a permissive rule.
+func TestLoopbackNotPermissive(t *testing.T) {
+	lo := rule(1, Allow, "any", "any", "any", "any")
+	lo.Iface = "lo"
+	iss := Analyze([]Rule{lo})
+	if hasCheck(iss, "rule.permissive") {
+		t.Errorf("loopback accept flagged permissive: %+v", iss)
+	}
+	for _, i := range iss {
+		if strings.Contains(i.Title, "logging off") {
+			t.Errorf("loopback accept flagged for logging: %+v", i)
+		}
+	}
+}
+
+// A rule carrying match conditions the model does not represent (connection
+// state, rate limits, tcp flags) matches only a subset of what its addresses
+// imply: it cannot cover another rule, and it is not an unconditional allow.
+func TestConditionalRuleCoversNothing(t *testing.T) {
+	established := rule(1, Allow, "any", "any", "any", "any")
+	established.Conditional = true
+	ssh := rule(2, Allow, "10.0.0.0/8", "any", "tcp", "22")
+	deny := rule(3, Deny, "192.168.0.0/16", "any", "any", "any")
+
+	iss := Analyze([]Rule{established, ssh, deny})
+	if hasCheck(iss, "rule.shadowed") {
+		t.Errorf("conditional rule reported a shadow: %+v", iss)
+	}
+	if hasCheck(iss, "rule.permissive") {
+		t.Errorf("conditional rule flagged permissive: %+v", iss)
+	}
+	if established.Covers(ssh) {
+		t.Error("a conditional rule must never claim coverage")
+	}
+}
+
+// A non-terminating jump (iptables LOG) lets the packet fall through, so it
+// cannot shadow the rules below it.
+func TestNonTerminatingRuleDoesNotShadow(t *testing.T) {
+	logJump := rule(1, Other, "any", "any", "any", "any")
+	logJump.Log = true
+	deny := rule(2, Deny, "10.0.0.0/8", "any", "any", "any")
+	if hasCheck(Analyze([]Rule{logJump, deny}), "rule.shadowed") {
+		t.Error("a LOG jump must not shadow the rule below it")
+	}
+}
+
+// A destination of "any" is not breadth on its own — in an iptables INPUT chain
+// every rule has one. Only an any source, or an any destination on all ports,
+// makes an unlogged allow worth flagging.
+func TestNoLogOnlyForGenuinelyBroadAllows(t *testing.T) {
+	narrow := rule(1, Allow, "10.40.0.0/16", "any", "tcp", "22")
+	narrow.Desc = "SSH from jump hosts"
+	for _, i := range Analyze([]Rule{narrow}) {
+		if strings.Contains(i.Title, "logging off") {
+			t.Errorf("scoped allow flagged for logging: %+v", i)
+		}
+	}
+
+	public := rule(2, Allow, "any", "any", "tcp", "443")
+	public.Desc = "public HTTPS"
+	found := false
+	for _, i := range Analyze([]Rule{public}) {
+		if strings.Contains(i.Title, "logging off") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("an unlogged any-source allow should still be flagged")
 	}
 }

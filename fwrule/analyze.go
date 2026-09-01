@@ -37,7 +37,10 @@ func shadowAndDuplicate(rules []Rule) []Issue {
 		}
 		for j := 0; j < i; j++ {
 			rj := rules[j]
-			if !rj.Enabled || !rj.Covers(ri) {
+			// Only a rule that terminates can shadow a later one. An "other"
+			// action (an iptables LOG jump, an unrecognised vendor action) lets
+			// the packet fall through to the rules below it.
+			if !rj.Enabled || rj.Action == Other || !rj.Covers(ri) {
 				continue
 			}
 			switch {
@@ -73,6 +76,12 @@ func permissive(rules []Rule) []Issue {
 	var out []Issue
 	for _, r := range rules {
 		if !r.Enabled || r.Action != Allow {
+			continue
+		}
+		// A rule whose real match we can't fully see (connection state, rate
+		// limit, tcp flags) is not an unconditional allow, and loopback traffic
+		// never leaves the host. Neither is what this check is looking for.
+		if r.Conditional || r.loopback() {
 			continue
 		}
 		srcAny, dstAny, portAny := anyAddr(r.SrcAddrs), anyAddr(r.DstAddrs), anyPort(r.DstPorts)
@@ -118,7 +127,11 @@ func hygiene(rules []Rule) []Issue {
 				Fix: "Add a description recording who added it, why, and when it can be removed.",
 			})
 		}
-		if r.Action == Allow && (anyAddr(r.SrcAddrs) || anyAddr(r.DstAddrs)) && !r.Log {
+		// "Broad" is the same test the drift check uses: an any source, or an
+		// any destination on all ports. A destination of "any" alone is not
+		// breadth — in an iptables INPUT chain every rule has one, and it just
+		// means "this host".
+		if r.Action == Allow && !r.Conditional && !r.loopback() && isPermissive(r) && !r.Log {
 			out = append(out, Issue{
 				Check: "rule.hygiene", Severity: "medium", Key: "nolog|" + r.MatchKey(), RuleIndex: r.Index,
 				Title: fmt.Sprintf("Rule %d is a broad allow with logging off", r.Index), Detail: r.Summary(),
@@ -154,7 +167,7 @@ func Drift(baseline, current []Rule) []Issue {
 		}
 		out = append(out, Issue{
 			Check: "rule.drift", Severity: sev, Key: "added|" + r.MatchKey(), RuleIndex: r.Index,
-			Title: fmt.Sprintf("Drift: rule added — %s%s", r.Summary(), widen),
+			Title:  fmt.Sprintf("Drift: rule added — %s%s", r.Summary(), widen),
 			Detail: "Not present in the baseline.", Fix: "Confirm this addition was intended and change-controlled.",
 		})
 	}
@@ -168,7 +181,7 @@ func Drift(baseline, current []Rule) []Issue {
 		}
 		out = append(out, Issue{
 			Check: "rule.drift", Severity: sev, Key: "removed|" + r.MatchKey(), RuleIndex: r.Index,
-			Title: fmt.Sprintf("Drift: rule removed — %s%s", r.Summary(), widen),
+			Title:  fmt.Sprintf("Drift: rule removed — %s%s", r.Summary(), widen),
 			Detail: "Present in the baseline, gone from the current config.", Fix: "Confirm this removal was intended and change-controlled.",
 		})
 	}
