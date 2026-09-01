@@ -1,5 +1,5 @@
 # RuleHawk — minimal production image.
-# Pull:  docker pull hexward/rulehawk:0.1.0   (linux/amd64, linux/arm64)
+# Pull:  docker pull hexward/rulehawk:0.1.1   (linux/amd64, linux/arm64)
 # Build: docker build -t hexward/rulehawk .
 # Run:   docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk
 

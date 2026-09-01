@@ -25,7 +25,7 @@ Start RuleHawk, open `http://127.0.0.1:8426`, add a config, paste the file
 contents, pick the vendor, and save. The audit runs immediately.
 
 ```bash
-docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:0.1.0
+docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:0.1.1
 ```
 
 The free edition holds **one config at a time**. To try a second sample, delete

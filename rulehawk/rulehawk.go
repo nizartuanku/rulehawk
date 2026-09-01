@@ -53,7 +53,7 @@ func (c *Collector) Describe() core.ModuleInfo {
 	return core.ModuleInfo{
 		ID:              ModuleID,
 		Name:            "RuleHawk",
-		Version:         "0.1.0",
+		Version:         "0.1.1",
 		TargetKind:      "config",
 		DefaultInterval: 24 * time.Hour,
 		ResolveAfter:    1,
