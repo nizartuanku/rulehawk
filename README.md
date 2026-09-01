@@ -165,6 +165,11 @@ The audit runs on save and takes a second or two. The dashboard confirms with
 *Audited "name" — N rules parsed*; if N is 0 or far lower than the file, the
 wrong vendor was almost certainly selected.
 
+## Questions
+
+Install, privacy, licensing, billing and the limits worth knowing before you
+buy: [`docs/FAQ.md`](docs/FAQ.md).
+
 ## Supported vendors
 
 iptables/nftables, Cisco ASA, pfSense/OPNsense, and Fortinet FortiGate. Cisco
