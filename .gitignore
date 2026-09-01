@@ -1,6 +1,7 @@
 /patchlight
 *.db
 license.key
+rulehawk-license.key
 patchlight-license.key
 issuer.key
 dist/
