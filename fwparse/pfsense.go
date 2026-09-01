@@ -24,17 +24,17 @@ func parsePfSense(config string) (Result, error) {
 	}
 	for _, pr := range doc.Rules {
 		r := fwrule.Rule{
-			Raw:       "pf rule: " + pr.Descr,
-			Name:      pr.Descr,
-			Desc:      pr.Descr,
-			Iface:     pr.Interface,
-			Enabled:   pr.Disabled == nil,
-			Log:       pr.Log != nil,
-			Proto:     protoOrAny(pr.Protocol),
-			SrcAddrs:  pfAddr(pr.Source),
-			DstAddrs:  pfAddr(pr.Destination),
-			SrcPorts:  pfPort(pr.Source),
-			DstPorts:  pfPort(pr.Destination),
+			Raw:      "pf rule: " + pr.Descr,
+			Name:     pr.Descr,
+			Desc:     pr.Descr,
+			Iface:    pr.Interface,
+			Enabled:  pr.Disabled == nil,
+			Log:      pr.Log != nil,
+			Proto:    protoOrAny(pr.Protocol),
+			SrcAddrs: pfAddr(pr.Source),
+			DstAddrs: pfAddr(pr.Destination),
+			SrcPorts: pfPort(pr.Source),
+			DstPorts: pfPort(pr.Destination),
 		}
 		switch strings.ToLower(pr.Type) {
 		case "pass":
@@ -51,14 +51,14 @@ func parsePfSense(config string) (Result, error) {
 }
 
 type pfRule struct {
-	Type        string      `xml:"type"`
-	Interface   string      `xml:"interface"`
-	Protocol    string      `xml:"protocol"`
-	Descr       string      `xml:"descr"`
-	Disabled    *struct{}   `xml:"disabled"`
-	Log         *struct{}   `xml:"log"`
-	Source      pfEndpoint  `xml:"source"`
-	Destination pfEndpoint  `xml:"destination"`
+	Type        string     `xml:"type"`
+	Interface   string     `xml:"interface"`
+	Protocol    string     `xml:"protocol"`
+	Descr       string     `xml:"descr"`
+	Disabled    *struct{}  `xml:"disabled"`
+	Log         *struct{}  `xml:"log"`
+	Source      pfEndpoint `xml:"source"`
+	Destination pfEndpoint `xml:"destination"`
 }
 
 type pfEndpoint struct {
