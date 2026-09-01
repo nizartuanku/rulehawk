@@ -37,7 +37,7 @@ jobs:
             goos: darwin
             goarch: arm64
           - target: darwin-amd64
-            runs-on: macos-13
+            runs-on: macos-15-intel
             goos: darwin
             goarch: amd64
           - target: windows-amd64
@@ -82,12 +82,20 @@ jobs:
           go build -trimpath -tags "$tags" -ldflags "$ldflags" -o "$out" ./cmd/rulehawk
 
           cp LICENSE README.md dist/pkg/
-          if [ "$GOOS" = windows ]; then
-            (cd dist/pkg && 7z a "../rulehawk-free-${version}-${TARGET}.zip" .)
-          else
+          if [ "$GOOS" != windows ]; then
             tar -C dist/pkg -czf "dist/rulehawk-free-${version}-${TARGET}.tar.gz" .
           fi
           ls -la dist
+
+      # Compress-Archive ships with PowerShell on every Windows runner; 7-Zip's
+      # presence and PATH are an image detail we would rather not depend on.
+      - name: Package (windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v',''
+          Compress-Archive -Path dist/pkg/* -DestinationPath "dist/rulehawk-free-$version-${{ matrix.target }}.zip"
+          Get-ChildItem dist
 
       - name: Smoke test
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
