@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<!--
+  pfSense / OPNsense firewall rules.
+  Exported from Diagnostics > Backup/Restore as config.xml; only the <filter>
+  section is shown here, which is all RuleHawk reads. Anonymised.
+-->
+<pfsense>
+  <filter>
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <protocol>tcp</protocol>
+      <descr>Public HTTPS to the web VIP</descr>
+      <source><any/></source>
+      <destination><address>198.51.100.20</address><port>443</port></destination>
+    </rule>
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <descr>Site-to-site VPN peer - full access pending segmentation</descr>
+      <source><network>192.168.50.0/24</network></source>
+      <destination><any/></destination>
+    </rule>
+    <rule>
+      <type>block</type>
+      <interface>wan</interface>
+      <descr>Blocked after IR-2025-114 - compromised peer host</descr>
+      <source><address>192.168.50.77</address></source>
+      <destination><any/></destination>
+    </rule>
+    <rule>
+      <type>pass</type>
+      <interface>lan</interface>
+      <descr>Default allow LAN to any</descr>
+      <log/>
+      <source><any/></source>
+      <destination><any/></destination>
+    </rule>
+    <rule>
+      <type>pass</type>
+      <interface>lan</interface>
+      <protocol>tcp</protocol>
+      <descr>Old NAS share - kept in case the migration is rolled back</descr>
+      <disabled/>
+      <source><network>10.10.0.0/16</network></source>
+      <destination><address>10.10.5.9</address><port>445</port></destination>
+    </rule>
+    <rule>
+      <type>pass</type>
+      <interface>opt1</interface>
+      <protocol>tcp</protocol>
+      <source><network>10.70.0.0/16</network></source>
+      <destination><any/></destination>
+    </rule>
+  </filter>
+</pfsense>

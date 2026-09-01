@@ -1,0 +1,25 @@
+! Cisco ASA 9.16 — interface ACLs
+! Exported with:  show running-config access-list
+!
+! Anonymised from a real rule base. Addresses are RFC 5737 / RFC 1918
+! documentation ranges. Every finding RuleHawk raises on this file is a
+! problem that existed in the original.
+!
+object-group network PARTNER-NETS
+ network-object 172.16.8.0 255.255.248.0
+!
+access-list outside_access_in remark Public HTTPS to the web VIP (NET-2291)
+access-list outside_access_in extended permit tcp any host 203.0.113.10 eq https
+access-list outside_access_in remark Partner site — full IP access pending segmentation
+access-list outside_access_in extended permit ip 172.16.8.0 255.255.248.0 any
+access-list outside_access_in remark Blocked after incident IR-2025-114 (compromised partner host)
+access-list outside_access_in extended deny ip host 172.16.9.31 any
+access-list outside_access_in remark Legacy backup window to the vault
+access-list outside_access_in extended permit tcp 10.20.0.0 255.255.0.0 host 10.30.1.5 range 1024 65535
+access-list outside_access_in extended permit tcp any host 203.0.113.10 eq https
+access-list outside_access_in extended permit tcp any any eq 3389 inactive
+!
+access-list dmz_access_in extended permit ip any any
+!
+access-group outside_access_in in interface outside
+access-group dmz_access_in in interface dmz

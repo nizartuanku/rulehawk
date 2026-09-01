@@ -1,0 +1,58 @@
+# FortiGate firewall policies
+# Exported with:  show firewall policy
+# Anonymised; address and service objects keep their names, which is how
+# RuleHawk sees them (it compares unresolved objects by name).
+config firewall policy
+    edit 1
+        set name "public-https"
+        set srcintf "wan1"
+        set dstintf "dmz"
+        set srcaddr "all"
+        set dstaddr "web-vip"
+        set action accept
+        set service "HTTPS"
+        set logtraffic all
+        set comments "Public HTTPS to the web VIP (NET-2291)"
+    next
+    edit 2
+        set name "partner-vpn-any"
+        set srcintf "vpn-partner"
+        set dstintf "internal"
+        set srcaddr "all"
+        set dstaddr "all"
+        set action accept
+        set service "ALL"
+        set logtraffic disable
+        set comments "Temporary during the migration - remove after cutover"
+    next
+    edit 3
+        set name "block-compromised-peer"
+        set srcintf "vpn-partner"
+        set dstintf "internal"
+        set srcaddr "partner-host-31"
+        set dstaddr "all"
+        set action deny
+        set service "ALL"
+        set logtraffic all
+        set comments "Blocked after IR-2025-114"
+    next
+    edit 4
+        set name "legacy-rdp"
+        set srcintf "wan1"
+        set dstintf "internal"
+        set srcaddr "all"
+        set dstaddr "rdp-jump"
+        set action accept
+        set service "RDP"
+        set status disable
+        set comments "Superseded by the VPN, left in place"
+    next
+    edit 5
+        set srcintf "lan"
+        set dstintf "internal"
+        set srcaddr "internal-nets"
+        set dstaddr "all"
+        set action accept
+        set service "ALL"
+    next
+end
