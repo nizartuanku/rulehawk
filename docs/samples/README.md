@@ -19,13 +19,17 @@ Two rules with an identical match produce one finding, not two, so a duplicate
 pair collapses — which is why the ASA file reports 11 rather than one per issue
 per rule.
 
+These counts are from 0.1.1 and later. Version 0.1.0 reported many more,
+because a rule scoped to one interface, and a rule matching on connection
+state, were both treated as covering every rule below them.
+
 ## How to run one
 
 Start RuleHawk, open `http://127.0.0.1:8426`, add a config, paste the file
 contents, pick the vendor, and save. The audit runs immediately.
 
 ```bash
-docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:0.1.1
+docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:latest
 ```
 
 The free edition holds **one config at a time**. To try a second sample, delete

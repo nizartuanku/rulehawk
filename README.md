@@ -36,7 +36,7 @@ License validation is offline cryptography — no phone-home, ever.
 
 ```bash
 # Docker — linux/amd64 and linux/arm64
-docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:0.1.1
+docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:latest
 
 # Or a release binary — linux, macOS and Windows builds are attached to
 # every release: https://github.com/nizartuanku/rulehawk/releases
@@ -61,7 +61,7 @@ RuleHawk audits an **exported** config — it never logs in to a device:
 You don't need a config of your own to see what RuleHawk does. The repository
 ships four anonymised ones — [`docs/samples/`](docs/samples/) — one per vendor.
 
-1. **Start it.** `docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:0.1.1`
+1. **Start it.** `docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:latest`
 2. **Open** `http://127.0.0.1:8426`.
 3. **Paste** [`docs/samples/cisco-asa-outside-acl.txt`](docs/samples/cisco-asa-outside-acl.txt),
    pick vendor **Cisco ASA**, and save. The audit runs on save.
