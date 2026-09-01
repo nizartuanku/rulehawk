@@ -55,6 +55,41 @@ RuleHawk audits an **exported** config — it never logs in to a device:
 - **pfSense / OPNsense** — Diagnostics → Backup/Restore → `config.xml`
 - **FortiGate** — `show firewall policy`
 
+## Try it in five minutes
+
+You don't need a config of your own to see what RuleHawk does. The repository
+ships four anonymised ones — [`docs/samples/`](docs/samples/) — one per vendor.
+
+1. **Start it.** `docker run -d -p 127.0.0.1:8426:8426 -v rulehawk-data:/data hexward/rulehawk:0.1.0`
+2. **Open** `http://127.0.0.1:8426`.
+3. **Paste** [`docs/samples/cisco-asa-outside-acl.txt`](docs/samples/cisco-asa-outside-acl.txt),
+   pick vendor **Cisco ASA**, and save. The audit runs on save.
+4. **Read the top finding:**
+
+   ```
+   high   Deny rule 3 never applies — shadowed by allow rule 2
+   ```
+
+   Rule 2 permits the partner range `172.16.8.0/21`. Rule 3, added after an
+   incident, denies one host inside it — and sits below the permit, so it never
+   fires. That host is still getting through.
+
+To see the drift check as well: delete that config (the free edition holds one
+at a time), save [`iptables-save.txt`](docs/samples/iptables-save.txt) as vendor
+**iptables**, press ***Set as baseline***, then paste
+[`iptables-save-after-change.txt`](docs/samples/iptables-save-after-change.txt)
+over the same config — same name, same vendor. RDP opened to the internet and a
+post-incident deny quietly removed:
+
+```
+high     Drift: rule added — allow tcp any → any:3389 (widens access)
+medium   Drift: rule removed — deny tcp 10.40.9.7/32 → any:5432 (removing a deny widens access)
+```
+
+Then export your own config with the command for your vendor above and repeat
+step 3. [`docs/samples/README.md`](docs/samples/README.md) lists exactly what
+each sample finds and why.
+
 ## Free vs paid
 
 This repository is the **free edition**: audit **1 config**, all four checks,
@@ -86,6 +121,48 @@ go test ./...
 ```
 
 Requires Go 1.24+. CGO is on for the SQLite driver.
+
+## Troubleshooting
+
+**`go-sqlite3 requires cgo to work. This is a stub`**
+The binary was built with `CGO_ENABLED=0`. Rebuild with `CGO_ENABLED=1` and a C
+toolchain installed (`build-essential` on Debian/Ubuntu, `gcc` elsewhere). The
+published release binaries and the Docker image are already built this way.
+
+**`bind: address already in use`**
+Something else holds 8426. Pick another port with `-listen 127.0.0.1:9426`, or
+`-p 127.0.0.1:9426:8426` for Docker.
+
+**The dashboard won't load from another machine.**
+By design: RuleHawk binds to `127.0.0.1` so an unauthenticated dashboard is not
+exposed. Reach it over an SSH tunnel (`ssh -L 8426:127.0.0.1:8426 host`). If you
+must bind wider, `-listen 0.0.0.0:8426` puts an unauthenticated UI on the
+network — put it behind a reverse proxy with authentication.
+
+**`config limit reached for your tier — upgrade to add more`**
+The free edition audits one config at a time. Delete the existing one to try
+another.
+
+**`invalid pfSense/OPNsense config.xml`**
+The pfSense parser reads the `<filter>` section of a `config.xml` backup, not a
+rules screenshot or an `.xml` fragment. Export from Diagnostics →
+Backup/Restore and paste the whole file.
+
+**"N config line(s) could not be parsed"**
+Not an error — it is the audit telling you its own coverage. Those lines were
+skipped, so any rules in them were not audited. Object-group and
+object-definition blocks land here on purpose: RuleHawk does not resolve them,
+and says so rather than assuming.
+
+**A key you paid for is rejected: "This is the free edition, which cannot
+activate license keys."**
+Exactly what it says — the open-source build has no activation path. Your key
+works in the licensed build from your purchase.
+
+**No findings after saving a config.**
+The audit runs on save and takes a second or two. The dashboard confirms with
+*Audited "name" — N rules parsed*; if N is 0 or far lower than the file, the
+wrong vendor was almost certainly selected.
 
 ## Supported vendors
 
