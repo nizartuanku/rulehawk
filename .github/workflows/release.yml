@@ -81,7 +81,7 @@ jobs:
           if [ "$GOOS" = windows ]; then out=dist/pkg/rulehawk.exe; fi
           go build -trimpath -tags "$tags" -ldflags "$ldflags" -o "$out" ./cmd/rulehawk
 
-          cp LICENSE README.md dist/pkg/
+          cp LICENSE.txt README.md dist/pkg/
           if [ "$GOOS" != windows ]; then
             tar -C dist/pkg -czf "dist/rulehawk-free-${version}-${TARGET}.tar.gz" .
           fi

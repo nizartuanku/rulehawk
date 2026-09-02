@@ -208,6 +208,6 @@ resolve to a CIDR are compared by name; it won't claim coverage it can't prove.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE.txt](LICENSE.txt).
 
 Part of the **Hexward** line of self-hosted security tools.
