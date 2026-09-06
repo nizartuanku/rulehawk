@@ -110,6 +110,8 @@ and adds team features:
 | History | 30 days | 1 year | unlimited |
 | Support | community | email | priority |
 
+**Whop sells paid licences only.** Free: github.com/nizartuanku/rulehawk — this repository is the free edition, Apache-2.0, no time limit; nothing on Whop is free, so try it here first.
+
 Licensing is offline: an expired or absent key simply returns to free limits.
 
 ## Build from source
