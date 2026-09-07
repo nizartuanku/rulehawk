@@ -105,7 +105,7 @@ and adds team features:
 | Configs | 1 | 25 | unlimited |
 | Checks (shadow, permissive, hygiene, drift) | ✓ | ✓ | ✓ |
 | Custom scan interval · scan-now | — | ✓ | ✓ |
-| Notifications | webhook | + email/Slack/Telegram | + PagerDuty/MS Teams |
+| Notifications | webhook, syslog | + email/Slack/Telegram | + PagerDuty/MS Teams |
 | Multi-user | — | — | ✓ |
 | History | 30 days | 1 year | unlimited |
 | Support | community | email | priority |
