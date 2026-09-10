@@ -1,6 +1,10 @@
 package fwrule
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -305,5 +309,68 @@ func TestNoLogOnlyForGenuinelyBroadAllows(t *testing.T) {
 	}
 	if !found {
 		t.Error("an unlogged any-source allow should still be flagged")
+	}
+}
+
+// --- RH-1 equivalence: index-based shadowAndDuplicate vs the quadratic reference ---
+
+func issuesBytes(t *testing.T, issues []Issue) []byte {
+	t.Helper()
+	b, err := json.MarshalIndent(issues, "", " ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func requireIdentical(t *testing.T, name string, rules []Rule) {
+	t.Helper()
+	got := issuesBytes(t, shadowAndDuplicate(rules))
+	want := issuesBytes(t, shadowAndDuplicateQuadratic(rules))
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s: index-based findings differ from quadratic reference\n--- quadratic ---\n%s\n--- indexed ---\n%s", name, want, got)
+	}
+}
+
+// TestShadowEquivalenceRandom hammers the two implementations with generated
+// rule bases covering every code path: any/cidr/multi/unparseable addresses,
+// single/range/named/inverted/out-of-range ports, wildcard and named
+// ifaces/protos, disabled, non-terminating, and conditional rules.
+func TestShadowEquivalenceRandom(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	addrPool := [][]string{
+		nil, {"any"}, {"0.0.0.0/0"}, {"10.0.0.0/8"}, {"10.1.0.0/16"}, {"10.1.2.0/24"},
+		{"10.1.2.3"}, {"10.1.2.3/32"}, {"192.168.0.0/16", "10.0.0.0/8"},
+		{"192.168.1.5", "web-servers"}, {"web-servers"}, {"db-grp"},
+		{"2001:db8::/32"}, {"2001:db8::1/128"}, {"::/0"}, {"::ffff:10.1.0.0/112"},
+		{"10.1.2.0/24", "any"},
+	}
+	portPool := [][]string{
+		nil, {"any"}, {"0-65535"}, {"80"}, {"443"}, {"80", "443"}, {"1000-2000"},
+		{"1500"}, {"8000-9000", "80"}, {"http"}, {"dns", "53"}, {"2000-1000"},
+		{"70000"}, {"60000-70000"}, {"0"}, {"65535"},
+	}
+	protos := []string{"", "any", "ip", "tcp", "udp", "icmp", "TCP"}
+	ifaces := []string{"", "any", "outside", "inside", "dmz", "*"}
+	actions := []Action{Allow, Allow, Allow, Deny, Deny, Other}
+	pick := func(n int) int { return rng.Intn(n) }
+	for trial := 0; trial < 60; trial++ {
+		n := 5 + pick(120)
+		rules := make([]Rule, n)
+		for i := range rules {
+			rules[i] = Rule{
+				Index:       i + 1,
+				Action:      actions[pick(len(actions))],
+				SrcAddrs:    addrPool[pick(len(addrPool))],
+				DstAddrs:    addrPool[pick(len(addrPool))],
+				Proto:       protos[pick(len(protos))],
+				SrcPorts:    portPool[pick(len(portPool))],
+				DstPorts:    portPool[pick(len(portPool))],
+				Iface:       ifaces[pick(len(ifaces))],
+				Enabled:     pick(10) != 0,
+				Conditional: pick(12) == 0,
+			}
+		}
+		requireIdentical(t, fmt.Sprintf("random trial %d", trial), rules)
 	}
 }

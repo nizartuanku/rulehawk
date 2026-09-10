@@ -28,7 +28,66 @@ func Analyze(rules []Rule) []Issue {
 	return out
 }
 
+// shadowAndDuplicate reports, for every enabled rule, whether an earlier rule
+// already covers its whole match — the earliest such rule, exactly as the
+// original quadratic scan (kept below as shadowAndDuplicateQuadratic, the
+// reference implementation the equivalence test compares against) reported it.
+// Candidate coverers come from a coverIndex instead of a full rescan, taking
+// the pass from O(n²) to roughly O(n log n) on clean configs, where the old
+// inner loop always ran to completion.
 func shadowAndDuplicate(rules []Rule) []Issue {
+	var out []Issue
+	ix := newCoverIndex()
+	for i := range rules {
+		ri := rules[i]
+		if ri.Enabled {
+			if j := ix.firstCoverer(rules, ri); j >= 0 {
+				out = append(out, coverIssue(rules[j], ri))
+			}
+		}
+		// Only a rule that terminates can shadow a later one. An "other"
+		// action (an iptables LOG jump, an unrecognised vendor action) lets
+		// the packet fall through to the rules below it. Conditional rules
+		// can never be shown to cover anything (Covers always says no), so
+		// they are not worth indexing either.
+		if ri.Enabled && ri.Action != Other && !ri.Conditional {
+			ix.add(int32(i), ri)
+		}
+	}
+	return out
+}
+
+// coverIssue builds the finding for "rule rj (earlier) covers rule ri". The
+// text and severity are byte-identical to what the quadratic version emitted.
+func coverIssue(rj, ri Rule) Issue {
+	switch {
+	case rj.SameMatch(ri) && rj.Action == ri.Action:
+		return Issue{
+			Check: "rule.duplicate", Severity: "low", Key: "dup|" + ri.MatchKey(), RuleIndex: ri.Index,
+			Title:  fmt.Sprintf("Rule %d is a duplicate of rule %d", ri.Index, rj.Index),
+			Detail: fmt.Sprintf("%s  (identical to rule %d)", ri.Summary(), rj.Index),
+			Fix:    fmt.Sprintf("Remove rule %d — it is identical to rule %d.", ri.Index, rj.Index),
+		}
+	case ri.Action == Deny && rj.Action == Allow:
+		return Issue{
+			Check: "rule.shadowed", Severity: "high", Key: "shadow|" + ri.MatchKey(), RuleIndex: ri.Index,
+			Title:  fmt.Sprintf("Deny rule %d never applies — shadowed by allow rule %d", ri.Index, rj.Index),
+			Detail: fmt.Sprintf("%s  is covered by earlier %s (rule %d), so the deny never fires — traffic you meant to block is allowed.", ri.Summary(), rj.Summary(), rj.Index),
+			Fix:    fmt.Sprintf("Move deny rule %d above rule %d, or narrow rule %d.", ri.Index, rj.Index, rj.Index),
+		}
+	default:
+		return Issue{
+			Check: "rule.shadowed", Severity: "medium", Key: "shadow|" + ri.MatchKey(), RuleIndex: ri.Index,
+			Title:  fmt.Sprintf("Rule %d is shadowed by rule %d and can never match", ri.Index, rj.Index),
+			Detail: fmt.Sprintf("%s  is covered by earlier %s (rule %d).", ri.Summary(), rj.Summary(), rj.Index),
+			Fix:    fmt.Sprintf("Remove rule %d (dead), or reorder if it was meant to take precedence.", ri.Index),
+		}
+	}
+}
+
+// shadowAndDuplicateQuadratic is the original O(n²) implementation, kept as
+// the reference for the byte-for-byte equivalence test in analyze_test.go.
+func shadowAndDuplicateQuadratic(rules []Rule) []Issue {
 	var out []Issue
 	for i := range rules {
 		ri := rules[i]
