@@ -14,6 +14,8 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/summary", s.handleSummary)
 	mux.HandleFunc("GET /api/findings", s.handleFindings)
+	mux.HandleFunc("GET /api/findings/export", s.handleFindingsExport)
 	mux.HandleFunc("POST /api/findings/status", s.handleFindingStatus)
 	mux.HandleFunc("GET /api/targets", s.handleListTargets)
 	mux.HandleFunc("POST /api/targets", s.handleAddTarget)
@@ -215,27 +218,102 @@ type findingJSON struct {
 	LastSeen    time.Time      `json:"last_seen"`
 }
 
+// findingsTopN is the E-28 tier boundary, matching RuleForge's reportTopN
+// pattern: /api/findings shows only the worst findingsTopN in full — the
+// dashboard already re-sorts and renders worst-first, so this changes
+// nothing about what a normal-size scan looks like. At millions of findings
+// it is what keeps the response (and the browser trying to render it) from
+// growing without bound. Nothing is dropped: /api/findings/export streams
+// every kept finding, and the two response headers below report the true
+// total so a client can tell it was tiered.
+const findingsTopN = 500
+
+// severityRank orders core.Severity worst-first. core.Severity has its own
+// unexported rank() used for storage-side thresholds; this is the same
+// ordering, kept local because the tiering here is a web-layer concern.
+func severityRank(sev core.Severity) int {
+	switch sev {
+	case core.SeverityCritical:
+		return 0
+	case core.SeverityHigh:
+		return 1
+	case core.SeverityMedium:
+		return 2
+	case core.SeverityLow:
+		return 3
+	case core.SeverityInfo:
+		return 4
+	default:
+		return 5
+	}
+}
+
+// keptFindings applies the one rule both /api/findings and its export share:
+// hide resolved findings older than a day (closure is news, not history).
+func keptFindings(recs []store.Record) []store.Record {
+	kept := make([]store.Record, 0, len(recs))
+	for _, rec := range recs {
+		if rec.Status == core.StatusResolved &&
+			(rec.ResolvedAt == nil || time.Since(*rec.ResolvedAt) > 24*time.Hour) {
+			continue
+		}
+		kept = append(kept, rec)
+	}
+	return kept
+}
+
+func toFindingJSON(rec store.Record) findingJSON {
+	return findingJSON{
+		Fingerprint: rec.Fingerprint, Target: rec.Target, Check: rec.Check,
+		Title: rec.Title, Severity: string(rec.Severity), Status: string(rec.Status),
+		Remediation: rec.Remediation, Evidence: rec.Evidence,
+		FirstSeen: rec.FirstSeen, LastSeen: rec.LastSeen,
+	}
+}
+
+// handleFindings is the E-28 tiered endpoint: the worst findingsTopN findings
+// in full (this is also what the dashboard's own re-sort would put first),
+// with X-RuleHawk-Total-Findings / X-RuleHawk-Shown-Findings headers naming
+// the true count. Never silently truncated — see handleFindingsExport for
+// the complete set.
 func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 	recs, err := s.Store.ListAll(s.Module.ID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "store error")
 		return
 	}
-	out := make([]findingJSON, 0, len(recs))
-	for _, rec := range recs {
-		// Hide resolved findings older than a day; closure is news, not history.
-		if rec.Status == core.StatusResolved &&
-			(rec.ResolvedAt == nil || time.Since(*rec.ResolvedAt) > 24*time.Hour) {
-			continue
-		}
-		out = append(out, findingJSON{
-			Fingerprint: rec.Fingerprint, Target: rec.Target, Check: rec.Check,
-			Title: rec.Title, Severity: string(rec.Severity), Status: string(rec.Status),
-			Remediation: rec.Remediation, Evidence: rec.Evidence,
-			FirstSeen: rec.FirstSeen, LastSeen: rec.LastSeen,
-		})
+	kept := keptFindings(recs)
+	total := len(kept)
+	shown := kept
+	if total > findingsTopN {
+		sort.SliceStable(kept, func(i, j int) bool { return severityRank(kept[i].Severity) < severityRank(kept[j].Severity) })
+		shown = kept[:findingsTopN]
 	}
+	out := make([]findingJSON, 0, len(shown))
+	for _, rec := range shown {
+		out = append(out, toFindingJSON(rec))
+	}
+	w.Header().Set("X-RuleHawk-Total-Findings", strconv.Itoa(total))
+	w.Header().Set("X-RuleHawk-Shown-Findings", strconv.Itoa(len(out)))
 	writeJSON(w, out)
+}
+
+// handleFindingsExport streams every kept finding as NDJSON — the full set
+// /api/findings tiers down to findingsTopN, counted there and complete here.
+func (s *Server) handleFindingsExport(w http.ResponseWriter, r *http.Request) {
+	recs, err := s.Store.ListAll(s.Module.ID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "store error")
+		return
+	}
+	kept := keptFindings(recs)
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="findings.ndjson"`)
+	w.Header().Set("X-RuleHawk-Total-Findings", strconv.Itoa(len(kept)))
+	enc := json.NewEncoder(w)
+	for _, rec := range kept {
+		_ = enc.Encode(toFindingJSON(rec))
+	}
 }
 
 func (s *Server) handleFindingStatus(w http.ResponseWriter, r *http.Request) {
