@@ -10,15 +10,21 @@ import (
 )
 
 // parseCiscoASA reads ASA `access-list` config. It resolves host/mask/any forms
-// to CIDRs; named objects/object-groups are kept by name (the analysers fall
-// back to exact-name matching for those). `remark` lines become the description
-// of the rules that follow on the same ACL.
+// to CIDRs, and it resolves `object` and `object-group` references to the
+// addresses and ports they are defined as, following groups nested inside
+// groups — see ciscoasa_objects.go for the two cases that deliberately keep the
+// name instead. `remark` lines become the description of the rules that follow
+// on the same ACL.
 func parseCiscoASA(config string) (Result, error) {
 	res := Result{Vendor: "cisco-asa"}
 	remarks := map[string]string{} // acl name → last remark
-	for _, raw := range strings.Split(config, "\n") {
+	lines := strings.Split(config, "\n")
+	// The definitions are read first, because a rule may refer to a group that
+	// the config defines further down.
+	objs, consumed := scanASAObjects(lines)
+	for idx, raw := range lines {
 		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "!") {
+		if line == "" || strings.HasPrefix(line, "!") || consumed[idx] {
 			continue
 		}
 		toks := strings.Fields(line)
@@ -34,7 +40,7 @@ func parseCiscoASA(config string) (Result, error) {
 			remarks[acl] = strings.TrimSpace(strings.Join(toks[3:], " "))
 			continue
 		}
-		r, ok := parseASARule(toks, line)
+		r, ok := parseASARule(toks, line, objs)
 		if !ok {
 			res.Unparsed = append(res.Unparsed, line)
 			continue
@@ -47,7 +53,7 @@ func parseCiscoASA(config string) (Result, error) {
 	return res, nil
 }
 
-func parseASARule(toks []string, raw string) (fwrule.Rule, bool) {
+func parseASARule(toks []string, raw string, objs *asaObjects) (fwrule.Rule, bool) {
 	r := fwrule.Rule{Enabled: true, Raw: raw, Name: toks[1]}
 	i := 2
 	if i < len(toks) && (toks[i] == "extended" || toks[i] == "standard") {
@@ -75,16 +81,16 @@ func parseASARule(toks []string, raw string) (fwrule.Rule, bool) {
 	i++
 
 	var ok bool
-	r.SrcAddrs, i, ok = asaAddr(toks, i)
+	r.SrcAddrs, i, ok = asaAddr(toks, i, objs)
 	if !ok {
 		return r, false
 	}
-	r.SrcPorts, i = asaPort(toks, i)
-	r.DstAddrs, i, ok = asaAddr(toks, i)
+	r.SrcPorts, i = asaPort(toks, i, objs)
+	r.DstAddrs, i, ok = asaAddr(toks, i, objs)
 	if !ok {
 		return r, false
 	}
-	r.DstPorts, i = asaPort(toks, i)
+	r.DstPorts, i = asaPort(toks, i, objs)
 	// Trailing flags.
 	for ; i < len(toks); i++ {
 		switch toks[i] {
@@ -104,7 +110,7 @@ func parseASARule(toks []string, raw string) (fwrule.Rule, bool) {
 }
 
 // asaAddr parses an address spec and returns the addresses plus the next index.
-func asaAddr(toks []string, i int) ([]string, int, bool) {
+func asaAddr(toks []string, i int, objs *asaObjects) ([]string, int, bool) {
 	if i >= len(toks) {
 		return nil, i, false
 	}
@@ -118,7 +124,10 @@ func asaAddr(toks []string, i int) ([]string, int, bool) {
 		return nil, i, false
 	case "object", "object-group":
 		if i+1 < len(toks) {
-			return []string{toks[i+1]}, i + 2, true // unresolved object name
+			// expandNet returns the name itself when the definition is not in
+			// this config, which is what this parser did for every reference
+			// before object expansion existed.
+			return objs.expandNet(toks[i+1]), i + 2, true
 		}
 		return nil, i, false
 	case "interface":
@@ -139,12 +148,20 @@ func asaAddr(toks []string, i int) ([]string, int, bool) {
 	}
 }
 
-// asaPort parses an optional port operator following an address.
-func asaPort(toks []string, i int) ([]string, int) {
+// asaPort parses an optional port operator following an address. A service
+// object-group may stand where an operator would: `object-group` in this
+// position is a port only when the name is defined as a service group, because
+// the very same words in the very same place introduce the destination address
+// when the name is a network group.
+func asaPort(toks []string, i int, objs *asaObjects) ([]string, int) {
 	if i >= len(toks) {
 		return []string{"any"}, i
 	}
 	switch toks[i] {
+	case "object", "object-group":
+		if i+1 < len(toks) && objs.hasSvc(toks[i+1]) && !objs.hasNet(toks[i+1]) {
+			return objs.expandSvc(toks[i+1]), i + 2
+		}
 	case "eq":
 		if i+1 < len(toks) {
 			return []string{portName(toks[i+1])}, i + 2
