@@ -24,6 +24,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // dev driver; release swaps to modernc.org/sqlite
 
+	"github.com/nizartuanku/rulehawk/internal/aiclient"
 	"github.com/nizartuanku/rulehawk/license"
 	"github.com/nizartuanku/rulehawk/notify"
 	"github.com/nizartuanku/rulehawk/rulehawk"
@@ -53,6 +54,10 @@ func main() {
 	webhook := flag.String("webhook", "", "webhook URL for alerts")
 	syslogAddr := flag.String("syslog", "", "syslog collector host:port for findings, e.g. 127.0.0.1:5514 (point this at Loglight to correlate across products)")
 	syslogNet := flag.String("syslog-network", "udp", "syslog transport: udp or tcp")
+	aiAssistURL := flag.String("ai-assist-url", os.Getenv("RULEHAWK_AI_ASSIST_URL"),
+		"hexward-ai sidecar base URL (e.g. http://127.0.0.1:8435) that enables the "+
+			"\"Explain this finding\" pilot; empty (the default) disables it — RuleHawk "+
+			"runs exactly as it does today. Also settable via RULEHAWK_AI_ASSIST_URL.")
 	flag.Parse()
 
 	db, err := sql.Open("sqlite3", *dbPath)
@@ -94,6 +99,19 @@ func main() {
 	server := web.NewServer(module.Describe(), st, scheduler, pub, *licFile)
 	server.Targets = st
 	server.TierLimits = rulehawkTierLimits
+	if *aiAssistURL != "" {
+		// CPU inference on a local sidecar is slow (observed ~1 token/sec
+		// with the free-tier SmolLM3-3B model) — internal/aiclient's 20s
+		// default attempt timeout is tuned for a cloud call, not this, so
+		// it is widened here. One retry only: a slow-but-working model
+		// benefits from more time per attempt, not from restarting the
+		// generation from scratch.
+		server.AIClient = aiclient.New(*aiAssistURL,
+			aiclient.WithTimeout(90*time.Second),
+			aiclient.WithMaxRetries(1),
+			aiclient.WithMaxTokens(300))
+		fmt.Printf("AI Assist: enabled, sidecar at %s\n", *aiAssistURL)
+	}
 
 	console := &rulehawk.Console{
 		Store: cfgStore,

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/nizartuanku/rulehawk/core"
+	"github.com/nizartuanku/rulehawk/internal/aiclient"
 	"github.com/nizartuanku/rulehawk/license"
 	"github.com/nizartuanku/rulehawk/sched"
 	"github.com/nizartuanku/rulehawk/store"
@@ -50,6 +51,19 @@ type Server struct {
 	// products that gate on ownership (ASM) set this; others leave it nil and
 	// the endpoint reports "not applicable".
 	Verify verify.Store
+
+	// AIClient, when set, enables the hexward-ai "Explain this finding"
+	// pilot: POST /api/findings/explain narrates one firewall-rule finding
+	// (rule.shadowed / rule.duplicate / rule.permissive / rule.hygiene /
+	// rule.drift — see explainableChecks below) through the local
+	// hexward-ai sidecar. nil disables the feature entirely: the endpoint
+	// reports {"available":false} and the dashboard renders the finding
+	// exactly as it does today, with no AI panel. Hard rule this field
+	// exists to protect: RuleHawk's own fwrule engine (fwrule/analyze.go)
+	// remains the ONLY source of findings and severity — AIClient only
+	// narrates a finding this server already produced and already stored;
+	// it is never consulted to decide whether something is a finding.
+	AIClient *aiclient.Client
 
 	// ExtraRoutes, when set, is called while building the handler so a product
 	// can register module-specific endpoints on the same mux (e.g. Decoy's
@@ -121,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/findings", s.handleFindings)
 	mux.HandleFunc("GET /api/findings/export", s.handleFindingsExport)
 	mux.HandleFunc("POST /api/findings/status", s.handleFindingStatus)
+	mux.HandleFunc("POST /api/findings/explain", s.handleExplainFinding)
 	mux.HandleFunc("GET /api/targets", s.handleListTargets)
 	mux.HandleFunc("POST /api/targets", s.handleAddTarget)
 	mux.HandleFunc("DELETE /api/targets", s.handleRemoveTarget)
@@ -343,6 +358,122 @@ func (s *Server) handleFindingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+// explainableChecks is the hexward-ai pilot's scope: only RuleHawk's own
+// firewall-rule analysers (fwrule/analyze.go), never config.unparsed or a
+// future non-rule check that has not been grounded against the prompt in
+// internal/aiclient. Extending this set means extending that prompt too,
+// not just adding a string here.
+var explainableChecks = map[string]bool{
+	"rule.shadowed":   true,
+	"rule.duplicate":  true,
+	"rule.permissive": true,
+	"rule.hygiene":    true,
+	"rule.drift":      true,
+}
+
+type explainResponse struct {
+	Available    bool     `json:"available"`
+	Explanation  string   `json:"explanation,omitempty"`
+	WhatToVerify []string `json:"what_to_verify,omitempty"`
+	Disclaimer   string   `json:"disclaimer,omitempty"`
+}
+
+// handleExplainFinding is RuleHawk's half of the hexward-ai "Explain this
+// finding" pilot. It never invents a finding or a severity: it only asks
+// the sidecar to narrate one finding this server's own fwrule engine
+// already produced and s.Store already persisted.
+//
+// Every failure mode here — no AIClient configured, sidecar unreachable,
+// sidecar slow, sidecar answered something internal/aiclient does not
+// trust — degrades to {"available":false} with HTTP 200. That is
+// deliberate, not an oversight: an AI Assist outage must never look like
+// an error to someone reading real findings, and the finding itself was
+// already fetched and rendered by the dashboard from /api/findings before
+// this endpoint is ever called, so it is never affected by what happens
+// here. HTTP 4xx is reserved for a caller mistake — bad JSON, an unknown
+// fingerprint, or a check outside the pilot's grounded scope — never for
+// the sidecar's own state.
+func (s *Server) handleExplainFinding(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Fingerprint == "" {
+		httpError(w, http.StatusBadRequest, "fingerprint is required")
+		return
+	}
+	rec, ok, err := s.Store.Get(s.Module.ID, req.Fingerprint)
+	if err != nil || !ok {
+		httpError(w, http.StatusNotFound, "finding not found")
+		return
+	}
+	if !explainableChecks[rec.Check] {
+		httpError(w, http.StatusBadRequest, "AI Assist does not narrate this finding type")
+		return
+	}
+	if s.AIClient == nil {
+		writeJSON(w, explainResponse{Available: false})
+		return
+	}
+
+	finding, err := json.Marshal(aiclient.RuleHawkFinding{
+		Fingerprint: rec.Fingerprint,
+		Check:       rec.Check,
+		Title:       rec.Title,
+		Severity:    string(rec.Severity),
+		RuleIndex:   evidenceInt(rec.Evidence, "rule_index"),
+		Detail:      evidenceString(rec.Evidence, "detail"),
+		Remediation: rec.Remediation,
+		Vendor:      evidenceString(rec.Evidence, "vendor"),
+	})
+	if err != nil {
+		// A struct of concrete fields cannot fail to marshal in practice;
+		// still degrade rather than 500 an otherwise-healthy dashboard.
+		writeJSON(w, explainResponse{Available: false})
+		return
+	}
+
+	exp, err := s.AIClient.Explain(r.Context(), aiclient.EvidencePacket{
+		Feature:  aiclient.FeatureRuleHawkExplainFinding,
+		Product:  "rulehawk",
+		Finding:  finding,
+		Language: "en",
+	})
+	if err != nil {
+		// Unreachable, timed out, or answered something internal/aiclient
+		// does not trust (see its Explain) — never surfaced as an error.
+		writeJSON(w, explainResponse{Available: false})
+		return
+	}
+	writeJSON(w, explainResponse{
+		Available:    true,
+		Explanation:  exp.ExplanationText,
+		WhatToVerify: exp.WhatToVerify,
+		Disclaimer:   exp.Disclaimer,
+	})
+}
+
+// evidenceString and evidenceInt read a finding's collector-supplied
+// Evidence map defensively: Evidence is map[string]any (see core.Finding),
+// and a value round-tripped through JSON (e.g. re-read from SQLite) lands
+// as float64 even when the collector originally set an int, so evidenceInt
+// accepts both rather than assuming the in-process shape.
+func evidenceString(ev map[string]any, key string) string {
+	if s, ok := ev[key].(string); ok {
+		return s
+	}
+	return ""
+}
+
+func evidenceInt(ev map[string]any, key string) int {
+	switch v := ev[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	}
+	return 0
 }
 
 func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {

@@ -106,6 +106,21 @@
     font: 12.5px/1.6 ui-monospace, monospace; color: var(--text-2);
     white-space: pre-wrap; word-break: break-all; display: none;
   }
+  /* AI Assist ("Explain this finding") — visually distinct from raw
+     evidence so it always reads as narration, never as a new fact from
+     RuleHawk's own engine. */
+  .aibtn { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .ai-explain {
+    margin-top: 8px; padding: 10px 12px; border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface-1));
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+    font-size: 13.5px; color: var(--text-2);
+  }
+  .ai-explain.muted { background: var(--surface-1); border-color: var(--border); font-style: italic; }
+  .ai-text { color: var(--text-1); }
+  .ai-verify { margin-top: 8px; }
+  .ai-verify ul { margin: 4px 0 0 18px; padding: 0; }
+  .ai-disclaimer { margin-top: 8px; font-size: 11.5px; color: var(--text-3); }
   .allclear { padding: 28px 16px; text-align: center; color: var(--text-2); }
   .allclear .big { font-size: 26px; }
 
@@ -262,11 +277,19 @@ const SEV = [
 ];
 const sevRank = s => ({critical:4, high:3, medium:2, low:1, info:0}[s] ?? 0);
 
+// aiState caches "Explain this finding" results/state per fingerprint, keyed
+// across the 10s poll below so a narration a person just asked for is never
+// wiped out by the next refresh() — render() is the only place that reads
+// it, and it never affects what /api/findings itself returned.
+const aiState = {};
+let lastSum = null, lastFindings = [], lastTargets = [];
+
 async function refresh() {
   try {
     const [sum, findings, targets, verification] = await Promise.all([
       j("/api/summary"), j("/api/findings"), j("/api/targets"), j("/api/verification"),
     ]);
+    lastSum = sum; lastFindings = findings; lastTargets = targets;
     render(sum, findings, targets);
     renderVerification(verification);
   } catch (e) { /* transient — next tick retries */ }
@@ -350,8 +373,10 @@ function render(sum, findings, targets) {
           ${f.status === "open" ? `<button onclick="setStatus('${f.fingerprint}','acknowledged')">Acknowledge</button>` : ""}
           ${f.status !== "resolved" ? `<button onclick="setStatus('${f.fingerprint}','suppressed')">Suppress</button>` : ""}
           ${f.evidence ? `<button class="evbtn" onclick="toggleEv(this)">Details</button>` : ""}
+          ${isExplainable(f) ? aiButton(f) : ""}
         </div>
         ${f.evidence ? `<div class="evidence">${esc(JSON.stringify(f.evidence, null, 2))}</div>` : ""}
+        ${isExplainable(f) ? aiPanel(f) : ""}
       </div>`).join("");
   }
 
@@ -591,6 +616,64 @@ function toggleEv(btn) {
   ev.style.display = ev.style.display === "block" ? "none" : "block";
 }
 function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+
+// --- hexward-ai "Explain this finding" pilot --------------------------------
+// RuleHawk's own fwrule engine (server-side) remains the only source of the
+// finding and its severity — everything below only asks a local model to
+// narrate a finding this page already rendered from /api/findings. If the
+// sidecar is absent or down, explainFinding() below degrades to a quiet
+// inline note; it never blocks or replaces the finding itself.
+
+// Mirrors explainableChecks in web/server.go — kept in sync by hand since
+// this is a static file, not generated from the Go source.
+const AI_EXPLAINABLE_CHECKS = new Set(["rule.shadowed", "rule.duplicate", "rule.permissive", "rule.hygiene", "rule.drift"]);
+function isExplainable(f) { return AI_EXPLAINABLE_CHECKS.has(f.check); }
+
+function aiButton(f) {
+  const st = aiState[f.fingerprint];
+  const busy = st && st.status === "loading";
+  return `<button class="aibtn" ${busy ? "disabled" : ""} onclick="explainFinding('${f.fingerprint}')">${busy ? "Explaining…" : "✨ Explain"}</button>`;
+}
+
+function aiPanel(f) {
+  const st = aiState[f.fingerprint];
+  if (!st) return "";
+  if (st.status === "loading") {
+    return `<div class="ai-explain muted">Asking the local AI Assist model to narrate this finding — it runs on your own hardware and can take a minute or two.</div>`;
+  }
+  if (st.status === "unavailable") {
+    return `<div class="ai-explain muted">AI Assist sidecar is not reachable right now — the finding above is unaffected.</div>`;
+  }
+  if (st.status === "error") {
+    return `<div class="ai-explain muted">Could not get an AI explanation (${esc(st.message || "unknown error")}) — the finding above is unaffected.</div>`;
+  }
+  // st.status === "done"
+  const verify = (st.whatToVerify || []).length
+    ? `<div class="ai-verify"><b>What to verify:</b><ul>${st.whatToVerify.map(v => `<li>${esc(v)}</li>`).join("")}</ul></div>`
+    : "";
+  return `<div class="ai-explain">
+    <div class="ai-text">${esc(st.explanation)}</div>
+    ${verify}
+    <div class="ai-disclaimer">${esc(st.disclaimer)}</div>
+  </div>`;
+}
+
+async function explainFinding(fingerprint) {
+  aiState[fingerprint] = { status: "loading" };
+  if (lastSum) render(lastSum, lastFindings, lastTargets);
+  try {
+    const res = await j("/api/findings/explain", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fingerprint }),
+    });
+    aiState[fingerprint] = res.available
+      ? { status: "done", explanation: res.explanation, whatToVerify: res.what_to_verify, disclaimer: res.disclaimer }
+      : { status: "unavailable" };
+  } catch (e) {
+    aiState[fingerprint] = { status: "error", message: e.message };
+  }
+  if (lastSum) render(lastSum, lastFindings, lastTargets);
+}
 
 refresh(); refreshLicense();
 setInterval(refresh, 10000);

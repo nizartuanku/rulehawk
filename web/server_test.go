@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nizartuanku/rulehawk/core"
+	"github.com/nizartuanku/rulehawk/internal/aiclient"
 	"github.com/nizartuanku/rulehawk/license"
 	"github.com/nizartuanku/rulehawk/sched"
 	"github.com/nizartuanku/rulehawk/store"
@@ -350,5 +351,198 @@ func TestAPI_PerProductTierLimitEnforced(t *testing.T) {
 	e.get(t, "/api/summary", &sum)
 	if sum["max_targets"] != float64(1) {
 		t.Fatalf("summary should report per-product max_targets=1, got %v", sum["max_targets"])
+	}
+}
+
+// --- hexward-ai "Explain this finding" pilot --------------------------------
+//
+// Hard rule under test throughout this block, not just documented in
+// server.go's comments: RuleHawk's own store is the only source of a
+// finding and its severity. The AI Assist endpoint may only narrate a
+// finding that was already there, and any failure of the sidecar must
+// degrade to available:false, never to an HTTP error or a changed finding.
+
+func TestAPI_ExplainFinding_NoAIClientConfigured(t *testing.T) {
+	e := newEnv(t)
+	rec := store.Record{Finding: core.Finding{
+		Fingerprint: "f1", Target: "fw1", Check: "rule.shadowed",
+		Title: "Deny rule 2 never applies", Severity: core.SeverityHigh,
+		Remediation: "move it", Module: "certwatch", Status: core.StatusOpen,
+		Evidence: map[string]any{"detail": "rule 2 is covered by rule 1", "rule_index": 2, "vendor": "cisco_asa"},
+	}}
+	if err := e.srv.Store.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
+	resp := e.post(t, "/api/findings/explain", map[string]string{"fingerprint": "f1"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 even with no AIClient configured (never an error), got %d", resp.StatusCode)
+	}
+	var out explainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Available {
+		t.Fatalf("expected available:false with no AIClient configured, got %+v", out)
+	}
+}
+
+func TestAPI_ExplainFinding_UnknownFingerprint(t *testing.T) {
+	e := newEnv(t)
+	resp := e.post(t, "/api/findings/explain", map[string]string{"fingerprint": "does-not-exist"})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown fingerprint, got %d", resp.StatusCode)
+	}
+}
+
+func TestAPI_ExplainFinding_MissingFingerprintIsBadRequest(t *testing.T) {
+	e := newEnv(t)
+	resp := e.post(t, "/api/findings/explain", map[string]string{})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a missing fingerprint, got %d", resp.StatusCode)
+	}
+}
+
+// A pilot-scope guard: hexward-ai's grounding prompt is written for RuleHawk's
+// rule.* checks specifically. A future non-rule check must not silently start
+// sending evidence through a prompt never written or tested for it.
+func TestAPI_ExplainFinding_RejectsNonRuleCheck(t *testing.T) {
+	e := newEnv(t)
+	rec := store.Record{Finding: core.Finding{
+		Fingerprint: "f2", Target: "fw1", Check: "config.unparsed",
+		Title: "3 config line(s) could not be parsed", Severity: core.SeverityLow,
+		Remediation: "review them", Module: "certwatch", Status: core.StatusOpen,
+	}}
+	if err := e.srv.Store.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
+	resp := e.post(t, "/api/findings/explain", map[string]string{"fingerprint": "f2"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a check outside the pilot's grounded scope, got %d", resp.StatusCode)
+	}
+}
+
+func TestAPI_ExplainFinding_HappyPath_GroundedInStoredFinding(t *testing.T) {
+	e := newEnv(t)
+	rec := store.Record{Finding: core.Finding{
+		Fingerprint: "f3", Target: "fw1", Check: "rule.shadowed",
+		Title:    "Deny rule 14 never applies — shadowed by allow rule 8",
+		Severity: core.SeverityHigh, Remediation: "Move deny rule 14 above rule 8.",
+		Module: "certwatch", Status: core.StatusOpen,
+		Evidence: map[string]any{"detail": "rule 14 is covered by rule 8", "rule_index": 14, "vendor": "cisco_asa"},
+	}}
+	if err := e.srv.Store.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotEvidence aiclient.EvidencePacket
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.Messages) == 2 {
+			_ = json.Unmarshal([]byte(body.Messages[1].Content), &gotEvidence)
+		}
+		content, _ := json.Marshal(map[string]any{
+			"explanation":    "Rule 14 never fires because rule 8 already covers the same traffic.",
+			"what_to_verify": []string{"Confirm rule 8 is still meant to take precedence."},
+			"disclaimer":     "a model-authored sentence the client must ignore and overwrite",
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"role": "assistant", "content": string(content)}},
+			},
+		})
+	}))
+	defer sidecar.Close()
+	e.srv.AIClient = aiclient.New(sidecar.URL, aiclient.WithTimeout(5*time.Second))
+
+	resp := e.post(t, "/api/findings/explain", map[string]string{"fingerprint": "f3"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var out explainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Available {
+		t.Fatalf("expected available:true, got %+v", out)
+	}
+	if out.Explanation == "" {
+		t.Fatal("expected a non-empty explanation")
+	}
+	if out.Disclaimer != aiclient.CanonicalDisclaimer {
+		t.Fatalf("Disclaimer = %q, want the canonical disclaimer regardless of what the sidecar sent", out.Disclaimer)
+	}
+
+	// Grounding: the evidence actually sent to the sidecar must be built
+	// from THIS finding's own stored fields, not invented — this is the
+	// assertion that would catch handleExplainFinding fabricating data.
+	if gotEvidence.Product != "rulehawk" {
+		t.Fatalf("Product = %q, want rulehawk", gotEvidence.Product)
+	}
+	if gotEvidence.Feature != aiclient.FeatureRuleHawkExplainFinding {
+		t.Fatalf("Feature = %q, want %q", gotEvidence.Feature, aiclient.FeatureRuleHawkExplainFinding)
+	}
+	var gotFinding aiclient.RuleHawkFinding
+	if err := json.Unmarshal(gotEvidence.Finding, &gotFinding); err != nil {
+		t.Fatalf("evidence.Finding did not decode as RuleHawkFinding: %v", err)
+	}
+	if gotFinding.Fingerprint != "f3" || gotFinding.RuleIndex != 14 || gotFinding.Detail != "rule 14 is covered by rule 8" {
+		t.Fatalf("evidence sent to sidecar does not match the stored finding: %+v", gotFinding)
+	}
+}
+
+// The sidecar being absent is the common case (free edition, AI Assist never
+// enabled) and must never look like an error — and the underlying finding,
+// already persisted by the deterministic engine, must be completely
+// unaffected by the AI call failing.
+func TestAPI_ExplainFinding_SidecarDown_DegradesGracefully(t *testing.T) {
+	e := newEnv(t)
+	rec := store.Record{Finding: core.Finding{
+		Fingerprint: "f4", Target: "fw1", Check: "rule.duplicate",
+		Title: "Rule 3 is a duplicate of rule 1", Severity: core.SeverityLow,
+		Remediation: "Remove rule 3.", Module: "certwatch", Status: core.StatusOpen,
+		Evidence: map[string]any{"detail": "identical rules", "rule_index": 3},
+	}}
+	if err := e.srv.Store.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing listens on this port — the sidecar is simply absent.
+	e.srv.AIClient = aiclient.New("http://127.0.0.1:1",
+		aiclient.WithTimeout(500*time.Millisecond), aiclient.WithMaxRetries(0))
+
+	resp := e.post(t, "/api/findings/explain", map[string]string{"fingerprint": "f4"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a down sidecar must still answer 200 — never obscure the finding as an error, got %d", resp.StatusCode)
+	}
+	var out explainResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Available {
+		t.Fatal("expected available:false when the sidecar cannot be reached")
+	}
+
+	var findings []map[string]any
+	e.get(t, "/api/findings", &findings)
+	found := false
+	for _, f := range findings {
+		if f["fingerprint"] == "f4" {
+			found = true
+			if f["title"] != "Rule 3 is a duplicate of rule 1" {
+				t.Fatalf("finding's own title must be untouched by a failed AI call: %v", f)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("finding f4 must still be listed after a failed AI Assist call")
 	}
 }
