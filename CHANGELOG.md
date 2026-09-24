@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Optional AI-narrated explanations.** Point RuleHawk at a running [hexward-ai](https://github.com/nizartuanku/hexward-ai) sidecar (`-ai-assist-url`, or `RULEHAWK_AI_ASSIST_URL`) and the dashboard adds a "✨ Explain" narration for shadowed/duplicate/permissive/hygiene/drift findings, written from the finding's own data by a small local model. Off by default. RuleHawk's Go engine remains the only source of findings and severity; if the sidecar is down, the endpoint returns `available: false` and every other finding is untouched.
 - **Cisco ASA `object` and `object-group` references are expanded, including nested groups.** Until now a port `object-group` fell back to `any` and an address group was compared as a label rather than as the addresses it stands for. The effect on a real audit was not cosmetic: RuleHawk missed genuine `rule.shadowed` findings and reported rules as more permissive than they are. Nesting is followed without a fixed depth, with a cycle guard; past an expansion ceiling, or on a reference the configuration never defines, the rule keeps the group's name rather than quietly dropping it — an overflow is counted, not hidden.
 - **Shadowed and duplicate detection no longer scales quadratically.** The pairwise scan is replaced by an interval-indexed one, so a large rule set is compared in a fraction of the time with the same findings.
 - **`/api/findings` is tiered, and there is an NDJSON export endpoint** for pulling findings into another system a line at a time.

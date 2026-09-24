@@ -200,6 +200,33 @@ collector works too — there is nothing Hexward-specific about the format.
 
 Available on every tier, free included.
 
+## AI-narrated explanations (optional)
+
+RuleHawk's own Go engine is the only source of findings and severity — that
+never changes. Point it at a running
+[hexward-ai](https://github.com/nizartuanku/hexward-ai) sidecar and the
+dashboard gains one thing: a plain-language "✨ Explain" narration next to a
+shadowed, duplicate, permissive, hygiene, or drift finding, written by a
+small local language model from that finding's own data.
+
+```bash
+rulehawk -ai-assist-url http://127.0.0.1:8435 ...   # or RULEHAWK_AI_ASSIST_URL
+```
+
+Leave the flag unset (the default) and nothing changes — no endpoint, no
+button, no dependency. Point it at a sidecar and:
+
+- The narration is grounded in the finding's own fields (rule index, IPs,
+  check type) — it cannot invent a finding or change a severity.
+- If the sidecar is unreachable or slow, `/api/findings/explain` returns
+  `available: false` and every other finding is untouched — an outage in the
+  sidecar never hides or corrupts an audit result.
+- Nothing leaves your network in either direction beyond the sidecar you run
+  yourself.
+
+Setup and the model tiers behind it:
+[hexward-ai](https://github.com/nizartuanku/hexward-ai).
+
 ## Honest limits
 
 RuleHawk audits rules **as written**. It does not log in to devices, and it does
@@ -207,6 +234,9 @@ not simulate full packet flow through NAT, policy routing, or stateful
 connection tracking — it catches rule-base problems (shadowing, permissiveness,
 hygiene, drift), not every possible runtime behaviour. Named objects it can't
 resolve to a CIDR are compared by name; it won't claim coverage it can't prove.
+The optional AI narration explains a finding in plain language; it never
+decides what counts as a finding or how severe it is — RuleHawk's own engine
+always does both, whether or not the narration feature is turned on.
 
 ## License
 
