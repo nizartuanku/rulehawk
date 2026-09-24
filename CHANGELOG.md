@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 — 2026-09-24
 
 - **AI Assist (optional): an ✨ Explain button on every finding.** (Earlier on `main` this was a firewall-rule-only pilot; it now covers every finding and uses the shared Hexward AI kit.) When RuleHawk is started
   with `-ai-assist-url`, a local [hexward-ai](https://github.com/nizartuanku/hexward-ai) sidecar

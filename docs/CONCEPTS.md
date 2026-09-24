@@ -130,10 +130,10 @@ The repository ships four anonymised sample configs, one per vendor, at
 [docs/samples/](https://github.com/nizartuanku/rulehawk/tree/main/docs/samples).
 
 ```
-curl -LO https://github.com/nizartuanku/rulehawk/releases/latest/download/rulehawk-free-0.1.1-linux-amd64.tar.gz
+curl -LO https://github.com/nizartuanku/rulehawk/releases/latest/download/rulehawk-free-0.1.2-linux-amd64.tar.gz
 curl -LO https://github.com/nizartuanku/rulehawk/releases/latest/download/SHA256SUMS
-grep 'rulehawk-free-0.1.1-linux-amd64.tar.gz' SHA256SUMS | sha256sum -c -
-tar xzf rulehawk-free-0.1.1-linux-amd64.tar.gz
+grep 'rulehawk-free-0.1.2-linux-amd64.tar.gz' SHA256SUMS | sha256sum -c -
+tar xzf rulehawk-free-0.1.2-linux-amd64.tar.gz
 ./rulehawk
 ```
 

@@ -1,6 +1,6 @@
 # Builds the release binaries and publishes the GitHub release.
 #
-# Trigger:  git tag v0.1.1 && git push origin v0.1.1
+# Trigger:  git tag v0.1.2 && git push origin v0.1.2
 #
 # CGO is mandatory (the SQLite driver needs it), so every target is built on a
 # runner of its own platform rather than cross-compiled — except linux/arm64,
@@ -118,6 +118,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -131,13 +134,15 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           {
-            echo "Verify a download:"
+            awk -v v="## ${version}" 'index($0,v)==1{f=1;next} /^## /{if(f)exit} f' ../src/CHANGELOG.md
+            echo
+            echo "Verify one download (works on Linux and macOS, no extra flags):"
             echo
             echo '```'
-            echo "sha256sum -c SHA256SUMS --ignore-missing"
+            echo "grep 'rulehawk-free-${version}-linux-amd64.tar.gz' SHA256SUMS | sha256sum -c -"
             echo '```'
             echo
-            echo "Docker: \`docker pull hexward/rulehawk:${version}\`"
+            echo "AI Assist is optional and off by default: see the \"AI Assist (optional)\" section of the README and https://github.com/nizartuanku/hexward-ai."
           } > ../notes.md
 
       - name: Publish release
