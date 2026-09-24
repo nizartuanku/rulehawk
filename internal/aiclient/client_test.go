@@ -13,14 +13,12 @@ import (
 
 func validEvidence() EvidencePacket {
 	finding, _ := json.Marshal(RuleHawkFinding{
-		Fingerprint: "f-0142",
-		Check:       "rule.shadowed",
-		Title:       "Deny rule 14 never applies — shadowed by allow rule 8",
-		Severity:    "high",
-		RuleIndex:   14,
-		Detail:      "permit ip 172.16.8.0/21 any  is covered by earlier deny ip host 172.16.9.31 any (rule 8), so the deny never fires — traffic you meant to block is allowed.",
-		Remediation: "Move deny rule 14 above rule 8, or narrow rule 8.",
-		Vendor:      "cisco_asa",
+		ID:               "f-0142",
+		Kind:             "rule.shadowed",
+		RuleIndex:        14,
+		RuleText:         "permit ip 172.16.8.0/21 any",
+		ShadowsRuleIndex: 8,
+		ShadowedRuleText: "deny ip host 172.16.9.31 any",
 	})
 	return EvidencePacket{
 		Feature:  FeatureRuleHawkExplainFinding,

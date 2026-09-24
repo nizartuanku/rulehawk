@@ -373,10 +373,10 @@ function render(sum, findings, targets) {
           ${f.status === "open" ? `<button onclick="setStatus('${f.fingerprint}','acknowledged')">Acknowledge</button>` : ""}
           ${f.status !== "resolved" ? `<button onclick="setStatus('${f.fingerprint}','suppressed')">Suppress</button>` : ""}
           ${f.evidence ? `<button class="evbtn" onclick="toggleEv(this)">Details</button>` : ""}
-          ${isExplainable(f) ? aiButton(f) : ""}
+          ${aiEnabled ? aiButton(f) : ""}
         </div>
         ${f.evidence ? `<div class="evidence">${esc(JSON.stringify(f.evidence, null, 2))}</div>` : ""}
-        ${isExplainable(f) ? aiPanel(f) : ""}
+        ${aiPanel(f)}
       </div>`).join("");
   }
 
@@ -617,17 +617,17 @@ function toggleEv(btn) {
 }
 function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
 
-// --- hexward-ai "Explain this finding" pilot --------------------------------
+// --- AI Assist: "Explain this finding" (hexward-ai) --------------------------
 // RuleHawk's own fwrule engine (server-side) remains the only source of the
 // finding and its severity — everything below only asks a local model to
 // narrate a finding this page already rendered from /api/findings. If the
 // sidecar is absent or down, explainFinding() below degrades to a quiet
 // inline note; it never blocks or replaces the finding itself.
 
-// Mirrors explainableChecks in web/server.go — kept in sync by hand since
-// this is a static file, not generated from the Go source.
-const AI_EXPLAINABLE_CHECKS = new Set(["rule.shadowed", "rule.duplicate", "rule.permissive", "rule.hygiene", "rule.drift"]);
-function isExplainable(f) { return AI_EXPLAINABLE_CHECKS.has(f.check); }
+// /api/ai says whether AI Assist is on and allowed for this edition; until it
+// answers, no Explain button is shown.
+var aiEnabled = false;
+fetch("/api/ai").then(r => r.json()).then(d => { aiEnabled = !!d.enabled; if (lastSum) render(lastSum, lastFindings, lastTargets); }).catch(() => {});
 
 function aiButton(f) {
   const st = aiState[f.fingerprint];
@@ -642,7 +642,7 @@ function aiPanel(f) {
     return `<div class="ai-explain muted">Asking the local AI Assist model to narrate this finding — it runs on your own hardware and can take a minute or two.</div>`;
   }
   if (st.status === "unavailable") {
-    return `<div class="ai-explain muted">AI Assist sidecar is not reachable right now — the finding above is unaffected.</div>`;
+    return `<div class="ai-explain muted">${esc(st.message || "AI Assist sidecar is not reachable right now.")} The finding above is unaffected.</div>`;
   }
   if (st.status === "error") {
     return `<div class="ai-explain muted">Could not get an AI explanation (${esc(st.message || "unknown error")}) — the finding above is unaffected.</div>`;
@@ -668,7 +668,7 @@ async function explainFinding(fingerprint) {
     });
     aiState[fingerprint] = res.available
       ? { status: "done", explanation: res.explanation, whatToVerify: res.what_to_verify, disclaimer: res.disclaimer }
-      : { status: "unavailable" };
+      : { status: "unavailable", message: res.reason };
   } catch (e) {
     aiState[fingerprint] = { status: "error", message: e.message };
   }
