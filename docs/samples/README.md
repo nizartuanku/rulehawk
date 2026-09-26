@@ -9,7 +9,7 @@ rule base.
 
 | File | Vendor | Rules | Findings | high | medium | low |
 |---|---|---|---|---|---|---|
-| [`cisco-asa-outside-acl.txt`](cisco-asa-outside-acl.txt) | Cisco ASA | 7 | 11 | 2 | 5 | 4 |
+| [`cisco-asa-outside-acl.txt`](cisco-asa-outside-acl.txt) | Cisco ASA | 7 | 10 | 2 | 5 | 3 |
 | [`iptables-save.txt`](iptables-save.txt) | iptables / nftables | 10 | 7 | 1 | 3 | 3 |
 | [`pfsense-config.xml`](pfsense-config.xml) | pfSense / OPNsense | 6 | 8 | 2 | 4 | 2 |
 | [`fortigate-policy.txt`](fortigate-policy.txt) | FortiGate | 5 | 7 | 2 | 3 | 2 |
@@ -65,10 +65,11 @@ below the permit, so it never fires. The host someone believed was blocked is
 still getting through, and reading the ACL top to bottom does not make that
 obvious.
 
-Also in this file: a duplicate ACE, an `inactive` rule nobody removed, a
-`range 1024 65535` backup rule, and an `object-group` block the ASA parser does
-not resolve — which RuleHawk reports as two unparsed lines rather than
-pretending the audit was complete.
+Also in this file: a duplicate ACE, an `inactive` rule nobody removed, and a
+`range 1024 65535` backup rule. The sample also has an `object-group` block —
+an earlier release could not resolve it and reported it as two unparsed lines;
+it is now expanded before scoring, including nested groups, so the audit is
+complete for this file (`unparsed: 0`).
 
 ### `iptables-save.txt` — a real Linux rule base
 
