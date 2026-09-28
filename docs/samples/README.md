@@ -16,7 +16,7 @@ rule base.
 | [`iptables-save-after-change.txt`](iptables-save-after-change.txt) | iptables | 10 | 2 drift | 1 | 1 | — |
 
 Two rules with an identical match produce one finding, not two, so a duplicate
-pair collapses — which is why the ASA file reports 11 rather than one per issue
+pair collapses — which is why the ASA file reports 10 rather than one per issue
 per rule.
 
 These counts are from 0.1.1 and later. Version 0.1.0 reported many more,
