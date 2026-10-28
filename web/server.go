@@ -25,6 +25,9 @@ import (
 	"github.com/nizartuanku/rulehawk/sched"
 	"github.com/nizartuanku/rulehawk/store"
 	"github.com/nizartuanku/rulehawk/verify"
+
+	"github.com/nizartuanku/hexward-core/hfs"
+	"github.com/nizartuanku/rulehawk/hfsbridge"
 )
 
 //go:embed static
@@ -32,9 +35,16 @@ var staticFS embed.FS
 
 // Server wires the dashboard over the running system.
 type Server struct {
-	Module    core.ModuleInfo // the product this binary ships
-	Store     store.Store
-	Scheduler *sched.Scheduler
+	Module core.ModuleInfo // the product this binary ships
+
+	// ExportMeta and ExportEvidence shape GET /api/findings/export?format=hfs,
+	// the Hexward Finding Schema snapshot a SIEM loads before live events.
+	// Zero values are fine: the product id falls back to Module.ID and
+	// evidence is redacted.
+	ExportMeta     hfs.Meta
+	ExportEvidence hfs.EvidenceMode
+	Store          store.Store
+	Scheduler      *sched.Scheduler
 
 	// Targets, when set, persists target add/remove so a restart restores the
 	// user's configuration. nil = in-memory only (tests, ephemeral runs).
@@ -314,8 +324,28 @@ func (s *Server) handleFindingsExport(w http.ResponseWriter, r *http.Request) {
 	}
 	kept := keptFindings(recs)
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="findings.ndjson"`)
 	w.Header().Set("X-RuleHawk-Total-Findings", strconv.Itoa(len(kept)))
+	if r.URL.Query().Get("format") == "hfs" {
+		// Hexward Finding Schema snapshot: the same events the SIEM sinks
+		// emit live, marked "snapshot", so a SIEM can load current state
+		// first and then follow transitions.
+		w.Header().Set("Content-Disposition", `attachment; filename="findings.hfs.ndjson"`)
+		meta := s.ExportMeta
+		if meta.Product == "" {
+			meta.Product = s.Module.ID
+			meta.Version = s.Module.Version
+		}
+		now := time.Now()
+		for _, rec := range kept {
+			line, err := hfs.Marshal(hfs.New(hfs.KindSnapshot, meta, hfsbridge.Source(rec.Finding), now, hfs.Options{Evidence: s.ExportEvidence}))
+			if err != nil {
+				continue
+			}
+			w.Write(append(line, '\n'))
+		}
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="findings.ndjson"`)
 	enc := json.NewEncoder(w)
 	for _, rec := range kept {
 		_ = enc.Encode(toFindingJSON(rec))

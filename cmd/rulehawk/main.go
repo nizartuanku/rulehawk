@@ -3,6 +3,8 @@
 //
 //	rulehawk                     # dashboard on 127.0.0.1:8426
 //	rulehawk -webhook <url>      # push new findings to a webhook
+//	rulehawk -export-file /var/log/hexward/rulehawk.ndjson   # for Wazuh, Splunk UF, Elastic
+//	rulehawk -hec-url https://splunk:8088 -hec-token-file hec.token
 //
 // Upload a firewall config (iptables/nftables, Cisco ASA, pfSense/OPNsense, or
 // Fortinet) and RuleHawk audits it for shadowed and duplicate rules, overly
@@ -24,6 +26,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // dev driver; release swaps to modernc.org/sqlite
 
+	"github.com/nizartuanku/hexward-core/hfs"
 	"github.com/nizartuanku/rulehawk/license"
 	"github.com/nizartuanku/rulehawk/notify"
 	"github.com/nizartuanku/rulehawk/rulehawk"
@@ -38,11 +41,11 @@ var issuerPublicKeyB64 = ""
 
 // rulehawkTierLimits: free = 1 config, Pro = 25, Team = unlimited.
 var rulehawkTierLimits = map[license.Tier]license.Limits{
-	license.TierFree: {MaxTargets: 1, RetentionDays: 30, Channels: []string{"webhook", "syslog"}},
+	license.TierFree: {MaxTargets: 1, RetentionDays: 30, Channels: []string{"webhook", "syslog", "file", "splunk-hec"}},
 	license.TierPro: {MaxTargets: 25, RetentionDays: 365,
-		Channels: []string{"webhook", "syslog", "email", "slack", "telegram"}, CustomInterval: true, ScanNow: true},
+		Channels: []string{"webhook", "syslog", "file", "splunk-hec", "email", "slack", "telegram"}, CustomInterval: true, ScanNow: true},
 	license.TierTeam: {MaxTargets: 0, RetentionDays: 0,
-		Channels:  []string{"webhook", "syslog", "email", "slack", "telegram", "pagerduty", "teams"},
+		Channels:  []string{"webhook", "syslog", "file", "splunk-hec", "email", "slack", "telegram", "pagerduty", "teams"},
 		MultiUser: true, CustomInterval: true, ScanNow: true},
 }
 
@@ -50,9 +53,7 @@ func main() {
 	listen := flag.String("listen", "127.0.0.1:8426", "dashboard listen address")
 	dbPath := flag.String("db", "rulehawk.db", "SQLite database path")
 	licFile := flag.String("license", "rulehawk-license.key", "license key file")
-	webhook := flag.String("webhook", "", "webhook URL for alerts")
-	syslogAddr := flag.String("syslog", "", "syslog collector host:port for findings, e.g. 127.0.0.1:5514 (point this at Loglight to correlate across products)")
-	syslogNet := flag.String("syslog-network", "udp", "syslog transport: udp or tcp")
+	chf := registerChannelFlags(flag.CommandLine)
 	aiURL := flag.String("ai-assist-url", os.Getenv("RULEHAWK_AI_ASSIST_URL"), "optional hexward-ai sidecar URL for AI-narrated explanations, e.g. http://127.0.0.1:8435 (off when empty)")
 	aiKeyFile := flag.String("ai-assist-key-file", os.Getenv("RULEHAWK_AI_ASSIST_KEY_FILE"), "API key file for a dedicated AI host or your own OpenAI-compatible endpoint (Pro/Team)")
 	aiLang := flag.String("ai-assist-lang", os.Getenv("RULEHAWK_AI_ASSIST_LANG"), "language of AI explanations: en (default) or id")
@@ -125,13 +126,14 @@ func main() {
 	}
 	server.ExtraRoutes = console.Register
 
-	var channels []notify.Channel
-	if *webhook != "" {
-		channels = append(channels, &notify.WebhookChannel{URL: *webhook})
+	exportMeta := hfs.Meta{Product: modID, Version: module.Describe().Version, Host: hostname()}
+	channels, err := chf.build(exportMeta)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rulehawk: "+err.Error())
+		os.Exit(2)
 	}
-	if *syslogAddr != "" {
-		channels = append(channels, &notify.SyslogChannel{Addr: *syslogAddr, Network: *syslogNet})
-	}
+	server.ExportMeta = exportMeta
+	server.ExportEvidence = chf.evidenceMode()
 	if len(channels) > 0 {
 		disp := notify.NewDispatcher(notify.Config{}, channels...)
 		notify.BindScheduler(scheduler, disp)

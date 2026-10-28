@@ -1,6 +1,6 @@
 # Builds the release binaries and publishes the GitHub release.
 #
-# Trigger:  git tag v0.1.2 && git push origin v0.1.2
+# Trigger:  git tag v0.1.3 && git push origin v0.1.3
 #
 # CGO is mandatory (the SQLite driver needs it), so every target is built on a
 # runner of its own platform rather than cross-compiled — except linux/arm64,
